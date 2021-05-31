@@ -11,7 +11,7 @@ import dash_core_components as dcc
 import dash_html_components as html
 from dash.dependencies import Input, Output, State
 import dash_table
-
+import threading
 
 
 def create_zmq_socket(zmq_port="5556", topicfilter="data"):
@@ -30,7 +30,24 @@ def recv_data(flags=0, copy=True, track=False):
         values = socket.recv(flags=flags, copy=copy, track=track)
         return fields, values
 
+lastdata = None
+socket_lock = threading.Lock()
  
+class Receiver(threading.Thread):
+    def run(self):
+        global lastdata
+        while True:
+            try:
+                with create_zmq_socket() as socket:
+                    while True:
+                        msg = socket.recv_multipart()
+                        socket_lock.acquire()
+                        lastdata = (msg[1], msg[2],time.time())
+                        socket_lock.release()
+            except:
+                pass
+                             
+
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
@@ -61,7 +78,7 @@ app.layout = html.Div(children=[
     ],style={'columnCount': 2}),  
     dcc.Interval(
         id='interval-component',
-        interval=1*1000, # in milliseconds
+        interval=1000, # in milliseconds
         n_intervals=0
     ),
     html.Div([
@@ -79,6 +96,7 @@ app.layout = html.Div(children=[
     dcc.Graph(id="main-graph"),
     dcc.Store(id='data-fields',data=None),
     dcc.Store(id='data-values',data=None),
+    dcc.Store(id='data-time',data=None),
     dcc.Store(id='timer',data=time.time()),
     dash_table.DataTable(id='table'),
 ])
@@ -93,14 +111,29 @@ def update_interval(val):
 @app.callback(
     Output('data-fields', 'data'),
     Output('data-values', 'data'),
-    Input('interval-component', 'n_intervals'))
-def update(n):
-    with create_zmq_socket() as socket:
-        topic = socket.recv()
-        fields = socket.recv()
-        values = socket.recv()
-        return fields.decode(), base64.b64encode(values).decode()
-
+    Output('data-time', 'data'),
+    Input('interval-component', 'n_intervals'),
+    State('data-time', 'data'),
+    State('auto-update', 'value'))
+def update(n, prev_time_tag, auto_update):
+    global lastdata
+    socket_lock.acquire()
+    if lastdata is not None and auto_update:
+        time_tag = lastdata[2]
+        if time_tag!=prev_time_tag:
+            fields = lastdata[0].decode()
+            values = base64.b64encode(lastdata[1]).decode()
+        else:
+            fields = dash.no_update
+            values = dash.no_update
+            time_tag = dash.no_update
+    else:
+        fields= dash.no_update
+        values = dash.no_update
+        time_tag = dash.no_update
+    socket_lock.release()
+    return fields, values, time_tag
+            
 @app.callback(Output('dropdown-x','options'),
               Output('dropdown-y','options'),
               Output('dropdown-x','value'), 
@@ -151,4 +184,6 @@ def update_table(fields):
     
 
 if __name__ == '__main__':
+    receiver_thread = Receiver()
+    receiver_thread.start()
     app.run_server(debug=False, host='0.0.0.0', port=5013)
