@@ -1,6 +1,7 @@
 import json
 import base64
 import zmq
+import numpy as np
 import time 
 import msgpack
 import msgpack_numpy as m
@@ -165,11 +166,15 @@ def update_vars(fields, prev_x, prev_y, autoscale):
               State('timer','data'),
               )
 def update_fig(x, y, values, autoscale, t):
-    if x is None or y is None:
+    if y is None:
         return {'data':[{'x': [], 'y': [], 'type': 'line'}] , 'layout' : {'xaxis' : {'title': ''}, 'yaxis' : { 'title':  ''}}}, time.time()
     data = msgpack.unpackb(base64.b64decode(values))
     t = t if autoscale=='off' else time.time()
-    return {'data': [{'x': data[x], 'y': data[y], 'type': 'line'}] , 'layout' : {'uirevision': t, 'xaxis' : {'title': x}, 'yaxis' : { 'title':  y}}}, t
+    if x is None:
+        ret =  {'data': [{'x': np.arange(len(data[y])), 'y': data[y], 'type': 'line'}] , 'layout' : {'uirevision': t, 'yaxis' : { 'title':  y}}}
+    else:
+        ret = {'data': [{'x': data[x], 'y': data[y], 'type': 'line'}] , 'layout' : {'uirevision': t, 'xaxis' : {'title': x}, 'yaxis' : { 'title':  y}}}
+    return ret, t
 
 @app.callback(Output('table','columns'),
               Output('table','data'),
